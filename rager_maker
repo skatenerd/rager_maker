@@ -1,0 +1,156 @@
+#!/usr/bin/python
+import smtplib, os, sys
+
+def get_input():
+    print_divider()
+    print "Welcome to ragermaker.  You will need:\n"
+    print ("a recipient list,\n"+
+           "a message whose first line is the subject,\n"
+           "email login credentials\n")
+    rtnval={}
+    rtnval["toaddrs"]=get_recipients()
+    rtnval["msg_txt"]=get_email_text()
+    rtnval["credentials"]=get_credentials()
+    rtnval["batch_size"]=get_batch_size()
+    return rtnval
+
+def print_divider():
+    print "-"*40
+
+def get_batch_size():
+    print_divider()
+    size_str=raw_input("What is batch size? (4 default)\n")
+    try:
+        if len(size_str)==0:
+            size=4
+        else:
+            size=int(size_str)
+    except ValueError:
+        print "you must enter a number\n"
+        get_batch_size()
+    return size
+
+def get_recipients():
+    print_divider()
+    try:
+        recipient_file = open(raw_input("What is recipient-list filename?\n"))
+    except IOError:
+        print "Invalid filename or path.  please try again\n"
+        return get_recipients()
+    rtnval=[]
+    for r in recipient_file:
+        rtnval.append(r.rstrip())
+    if verify_recipients_okay(rtnval):
+        return rtnval
+    else:
+        return get_recipients()
+
+def get_email_text():
+    print_divider()
+    try:
+        email_file = open(raw_input("What is the input filename?\n"))
+    except IOError:
+        print "invalid filename or path.  please try again\n"
+        return get_email_text()
+    #populate subject and body
+    subj=email_file.next()
+    body=""
+    for line in email_file:
+        body+=line
+    print_divider()
+    message_okay=verify_message_okay(subj,body)
+    if message_okay:
+        return [subj,body]
+    else:
+        return get_email_text()
+
+def verify_message_okay(subj,body):
+    print("The message will be:")
+    print("SUBJECT:\n{0}\n\n".format(subj.rstrip()))
+    print("BODY:\n{0}".format(body.rstrip()))
+    print_divider()
+    message_okay=str_to_bool(raw_input("Is this correct?\n"))
+    return message_okay
+def verify_recipients_okay(recipients):
+    print_divider()
+    print("The recipients will be:\n")
+    for r in recipients:
+        print r.rstrip()
+    print "\n"
+    return str_to_bool(raw_input("Is this correct?\n"))
+
+
+def str_to_bool(v):
+    return v.lower() in ("yes", "true", "t", "1","y","t","")
+
+def get_credentials():
+    print_divider()
+    smtp_server = raw_input("What is the smpt server? default: smpt.gmail.com\n")
+    if(len(smtp_server.rstrip())==0):
+        smtp_server="smtp.gmail.com"
+    print_divider()
+    # Credentials (if needed)  
+    username = raw_input("What is the username?\n")  
+    print_divider()
+    os.system("stty -echo")
+    password = raw_input("What is the password?\n")
+    os.system("stty echo")
+    return (username,password,smtp_server)
+
+def login_and_send_msgs(recipient_groups, subject,body, username, password, smtp_server,batch_size):
+    server = smtplib.SMTP(smtp_server)
+    server.starttls()  
+    server.login(username,password)  
+    refused_addresses=[]
+    for group in recipient_groups:
+        try:
+            hdr=("From: {0}\r\n"+
+                "To: {1}\r\n"+
+                "CC: {2}\r\n"+
+                "Subject: {3}\r\n").format(username,
+                                            group[0],
+                                            ",".join(group[1:]), 
+                                            subject)
+            msg=hdr+body
+            server.sendmail(username, group, msg)
+        except smtplib.SMTPRecipientsRefused:
+            refused_addresses.append(group)
+
+    server.quit()
+    return refused_addresses
+
+def get_addr_tuples(toaddrs,batch_size):
+    num_guests=len(toaddrs)
+    addr_lists=[toaddrs[i:min(num_guests,i+4)] for i in range(num_guests)[::4]]
+    #watch out or a loner at the end of the list
+    if len(addr_lists[-1])==1 and len(addr_lists)>1:
+        addr_lists[-2]+=addr_lists.pop()
+    addr_tuples=map(lambda x: tuple(x),addr_lists)
+    return addr_tuples
+
+def send_msgs(toaddrs,msg_txt,credentials,batch_size):
+    (subject,body)=msg_txt
+    (username,password,smtp_server)=credentials
+    addr_tuples=get_addr_tuples(toaddrs,batch_size)
+    try:
+        refused_addresses=login_and_send_msgs(addr_tuples,
+                                              subject,
+                                              body,
+                                              username,
+                                              password,
+                                              smtp_server,
+                                              batch_size)
+        if len(refused_addresses)>0:
+            print ("The following emails failed due to invalid "+
+                  "email addressess: {0}").format(refused_addresses,batch_size)
+        else:
+            print "Success!"
+
+    except smtplib.SMTPAuthenticationError:
+        print "incorrect password.  provide new credentials"
+        credentials=get_credentials() 
+        send_msgs(toaddrs,msg_txt,credentials,batch_size)
+   
+input_params=get_input()
+#print input_params
+send_msgs(**input_params)
